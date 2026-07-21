@@ -1,0 +1,19 @@
+services:
+  fastapi-backend:
+    build: ./backend
+    container_name: fastapi-admin
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/upload:/root/backend/upload
+      - ./backend/excel:/root/backend/excel
+      - ./backend/logs:/root/backend/logs
+    restart: always
+  vue-front:
+    build: ./admin-vue
+    container_name: vue-front
+    ports:
+      - "80:80"
+    depends_on:
+      - fastapi-backend
+    restart: always

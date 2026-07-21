@@ -1,0 +1,56 @@
+# 进度备忘 — 2026.7.16（最近一次更新）
+
+## ✅ 已完成
+### 前置文档优化
+- [x] 五个课程文档统一编号（课程一~课程五）
+- [x] 课程之间加了"前情提要"和"下一步"关联
+- [x] 课程三（静态IP）步骤细化，改成7步操作流程
+- [x] 课程一和二网络模式统一为NAT
+- [x] 新增 demo_db 数据库10步教学文档
+- [x] 新增 Anaconda3 + PyCharm 安装配置教学文档
+
+### 全栈项目（课程五）
+- [x] 第一章：Linux环境搭建（全部完）
+- [x] 第二章：FastAPI后端（代码 + conda部署 + Docker部署 + 头像上传）
+- [x] 第三章：Vue3前端（代码 + 美化 + 环境变量 + 多阶段Docker构建）
+- [x] Nginx反向代理配置（/api + /upload）
+- [x] 全栈一体化 Docker 编排（docker-compose-all.yml）
+- [x] 第六章：CI/CD 自动化部署（自托管Runner + GitHub Actions 已跑通）
+
+### 当前状态
+- [x] 后端运行正常（Docker容器 fastapi-admin）
+- [x] 前端运行正常（Docker容器 vue-front）
+- [x] 访问地址：http://192.168.209.150/admin/#/login
+- [x] CI/CD 已跑通（绿色 ✅）
+- [x] 文档已同步
+
+## ⏳ 下次开机
+- [ ] 课程四（Linux常用命令）vi编号修正、标题优化（可选）
+- [ ] 确认所有功能正常
+- [ ] 正式收尾
+
+## 💡 启动命令速查
+```bash
+# Xshell 启动 CI/CD Runner（保持窗口打开）
+cd /root/actions-runner && ./run.sh
+
+# 查看后端日志
+docker logs -f fastapi-admin
+
+# 查看前端日志
+docker logs -f vue-front
+
+# 本地推送代码触发自动部署
+cd D:/振涛教育/深度学习/专高二/AI方向课程
+git add . && git commit -m "更新" && git push
+```
+
+## 📁 文件结构总览
+```
+课程一    VMware 搭建 CentOS7 教学虚拟机
+课程二    CentOS7 系统安装与登录实训教学
+课程三    CentOS7 静态 IP 网络配置实训教学
+课程四    Linux CentOS7 教学实训常用命令
+demo_db   数据库入门10步教学文档（独立模块）
+课程五    全栈实训完整教学文档（主课程）
+```

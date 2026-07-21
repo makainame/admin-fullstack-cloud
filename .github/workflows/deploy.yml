@@ -1,0 +1,21 @@
+name: Deploy
+on:
+  push:
+    branches: [ main ]
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: 拉取最新代码
+        run: |
+          cd /root/project
+          git pull
+      - name: 清理旧容器并释放端口
+        run: |
+          docker stop fastapi-admin vue-front 2>/dev/null || true
+          docker rm fastapi-admin vue-front 2>/dev/null || true
+          systemctl stop nginx 2>/dev/null || true
+      - name: 构建并部署
+        run: |
+          cd /root/project
+          docker compose -f docker-compose-all.yml up -d --build
