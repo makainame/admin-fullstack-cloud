@@ -1,7 +1,9 @@
-name: Deploy
+name: Deploy to Aliyun Server
+
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+
 jobs:
   deploy:
     runs-on: self-hosted
@@ -9,13 +11,20 @@ jobs:
       - name: 拉取最新代码
         run: |
           cd /root/project
-          git pull
-      - name: 清理旧容器并释放端口
+          git pull origin main
+
+      - name: 停止旧容器并释放端口
         run: |
           docker stop fastapi-admin vue-front 2>/dev/null || true
           docker rm fastapi-admin vue-front 2>/dev/null || true
-          systemctl stop nginx 2>/dev/null || true
-      - name: 构建并部署
+
+      - name: 构建并启动全栈服务
         run: |
           cd /root/project
-          docker compose -f docker-compose-all.yml up -d --build
+          docker-compose -f docker-compose-all.yml down 2>/dev/null || true
+          docker-compose -f docker-compose-all.yml up -d --build
+
+      - name: 查看运行状态
+        run: |
+          docker ps
+          docker-compose -f docker-compose-all.yml logs --tail=20
