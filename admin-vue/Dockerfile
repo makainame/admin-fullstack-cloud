@@ -1,5 +1,5 @@
 # 第一阶段：构建前端
-FROM node:16 AS builder
+FROM node:18 AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
