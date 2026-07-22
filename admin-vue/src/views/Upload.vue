@@ -1,6 +1,6 @@
 <template>
   <div style="width: 80%; margin: 20px auto;">
-    <h3>📁 文件上传管理</h3>
+    <h3>📁 文件上传管理1</h3>
     <el-upload
       action="/api/upload"
       :headers="headerObj"
