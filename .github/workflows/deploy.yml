@@ -8,11 +8,13 @@ jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - name: 拉取最新代码
+      - name: 清理并拉取最新代码
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           cd /root/project
+          git reset --hard HEAD
+          git clean -fd
           git pull origin main
 
       - name: 写入后端环境变量
