@@ -1,0 +1,759 @@
+# 第二大章：企业级分层 FastAPI 后端（模块化路由，标准工程结构）
+
+## 2.1 后端完整目录结构
+
+```
+backend/
+├── .env                   # 全局配置文件（数据库、JWT）
+├── .gitignore             # Git 排除规则（venv/、__pycache__/、.env 等）
+├── requirements.txt       # 项目依赖清单
+├── run.py                 # 统一项目启动入口
+├── Dockerfile             # Docker 容器化构建配置
+├── docker-compose.yml     # Docker 快速编排部署配置
+├── upload/                # 用户上传文件存储目录
+├── excel/                 # Excel 导入导出文件存储目录
+├── logs/                  # 项目运行日志存放
+└── app/
+    ├── __init__.py
+    ├── main.py            # FastAPI 总实例、跨域、路由挂载
+    ├── core/              # 核心底层工具：配置、数据库、JWT
+    │   ├── __init__.py
+    │   ├── config.py
+    │   ├── db.py
+    │   └── security.py
+    ├── api/               # 模块化业务路由（登录/用户/上传/Excel 分离）
+    │   ├── __init__.py
+    │   ├── deps.py        # 全局登录鉴权依赖（统一抽取）
+    │   ├── login.py
+    │   ├── user.py        # 分页 + 完整 CRUD
+    │   ├── upload.py      # 文件上传 + 列表查询
+    │   └── excel.py       # Excel 导入导出接口
+    ├── schemas/           # 数据校验模型（拓展预留）
+    │   └── __init__.py
+    └── utils/             # 通用工具函数
+        ├── __init__.py
+        └── excel_util.py  # Pandas 处理 Excel 工具类
+```
+
+## 2.2 全部代码文件
+
+### 一、项目配置
+
+#### 1. backend/.env — 环境变量配置
+
+```
+# 数据库配置
+DB_HOST=192.168.209.150
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=123456
+DB_NAME=admin_db
+# JWT 认证配置
+JWT_SECRET_KEY=admin_2026_secret_888
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_HOUR=2
+# 服务监听配置
+SERVER_HOST=0.0.0.0
+SERVER_PORT=8000
+```
+
+> `.env` 包含敏感信息（数据库密码、JWT密钥），已加入 `.gitignore`，不会提交到 Git 仓库。
+
+#### 2. backend/requirements.txt — Python 依赖清单
+
+```
+fastapi
+uvicorn
+pymysql
+pyjwt
+passlib[bcrypt]
+python-multipart
+python-dotenv
+pandas
+openpyxl
+```
+
+#### 3. backend/.gitignore — Git 排除规则
+
+```
+# 虚拟环境
+venv/
+.venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 环境变量（包含数据库密码、JWT密钥等敏感信息）
+.env
+
+# 运行时数据目录（上传文件、导出Excel、日志）
+upload/
+excel/
+logs/
+
+# IDE 配置
+.vscode/
+.idea/
+
+# 系统文件
+Thumbs.db
+.DS_Store
+```
+
+---
+
+### 二、启动入口
+
+#### 4. backend/run.py — 项目统一启动入口
+
+```python
+import uvicorn
+from app.main import app
+from app.core.config import settings
+if __name__ == "__main__":
+    uvicorn.run(
+        app="app.main:app",
+        host=settings.SERVER_HOST,
+        port=settings.SERVER_PORT,
+        reload=False
+    )
+```
+
+#### 5. app/main.py — FastAPI 总实例
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.api import api_router
+app = FastAPI(title="Vue后台管理系统后端接口文档")
+
+# 全局跨域配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 挂载全部业务路由
+app.include_router(api_router)
+```
+
+---
+
+### 三、核心底层（app/core/）
+
+#### 6. app/core/config.py — 环境配置读取
+
+```python
+import os
+from dotenv import load_dotenv
+load_dotenv()
+class Settings:
+    # 数据库
+    DB_HOST = os.getenv("DB_HOST")
+    DB_PORT = int(os.getenv("DB_PORT"))
+    DB_USER = os.getenv("DB_USER")
+    DB_PASSWORD = os.getenv("DB_PASSWORD")
+    DB_NAME = os.getenv("DB_NAME")
+    # JWT
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
+    JWT_EXPIRE_HOUR = int(os.getenv("JWT_EXPIRE_HOUR"))
+    # 服务
+    SERVER_HOST = os.getenv("SERVER_HOST")
+    SERVER_PORT = int(os.getenv("SERVER_PORT"))
+settings = Settings()
+```
+
+#### 7. app/core/db.py — 数据库连接封装
+
+```python
+import pymysql
+from app.core.config import settings
+def get_db():
+    db = pymysql.connect(
+        host=settings.DB_HOST,
+        port=settings.DB_PORT,
+        user=settings.DB_USER,
+        password=settings.DB_PASSWORD,
+        database=settings.DB_NAME,
+        charset="utf8mb4"
+    )
+    cursor = db.cursor(pymysql.cursors.DictCursor)
+    return db, cursor
+```
+
+#### 8. app/core/security.py — JWT 令牌 + 密码加密工具
+
+```python
+from datetime import datetime, timedelta
+import jwt
+import bcrypt
+from app.core.config import settings
+
+# ===== JWT 令牌工具 =====
+
+# 生成登录令牌
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.now() + timedelta(hours=settings.JWT_EXPIRE_HOUR)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+# 解析校验令牌
+def decode_token(token: str):
+    return jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+
+# ===== 密码加密工具 =====
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+```
+
+---
+
+### 四、全局鉴权（app/api/）
+
+#### 9. app/api/deps.py — 统一登录鉴权依赖
+
+```python
+from fastapi import Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+import jwt
+from app.core.security import decode_token
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = decode_token(token)
+        uid = payload.get("uid")
+        username = payload.get("username")
+        if not uid:
+            raise HTTPException(status_code=401, detail="登录失效，请重新登录")
+        return {"uid": uid, "username": username}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="令牌已过期，请重新登录")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="令牌非法或过期")
+```
+
+---
+
+### 五、业务路由（app/api/）
+
+#### 10. app/api/login.py — 登录、登出接口
+
+```python
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
+from app.core.db import get_db
+from app.core.security import create_access_token, verify_password
+router = APIRouter(prefix="/api", tags=["登录认证模块"])
+
+# 登录接口，下发JWT令牌
+@router.post("/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    db, cur = get_db()
+    cur.execute("SELECT * FROM sys_user WHERE username=%s", (form_data.username,))
+    user = cur.fetchone()
+    db.close()
+    if not user:
+        raise HTTPException(status_code=400, detail="账号或密码错误")
+
+    stored_pw = user["password"]
+    # 兼容处理：bcrypt哈希 → 用verify校验；明文 → 直接比较（旧数据）
+    if stored_pw.startswith("$2"):
+        if not verify_password(form_data.password, stored_pw):
+            raise HTTPException(status_code=400, detail="账号或密码错误")
+    else:
+        if stored_pw != form_data.password:
+            raise HTTPException(status_code=400, detail="账号或密码错误")
+
+    token = create_access_token({"uid": user["id"], "username": user["username"]})
+    return {"access_token": token, "token_type": "bearer", "user_info": user}
+
+# 登出接口（前端清除本地token即可）
+@router.post("/logout")
+def logout():
+    return {"msg": "登出成功，请前端清除本地Token令牌"}
+```
+
+> **教学点：** `OAuth2PasswordRequestForm` 自动解析 `username` 和 `password` 两个表单字段，前端用 `new URLSearchParams()` 提交即可。
+
+#### 11. app/api/user.py — 用户分页 CRUD（含头像上传）
+
+```python
+import os, shutil
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
+from app.api.deps import get_current_user
+from app.core.db import get_db
+from app.core.security import hash_password
+from datetime import datetime
+
+router = APIRouter(prefix="/api/user", tags=["用户管理模块"])
+
+AVATAR_DIR = "upload/avatars"
+
+# 分页查询用户（不返回密码）
+@router.get("/list")
+def user_list(
+    page: int = Query(1, description="页码"),
+    size: int = Query(10, description="每页条数"),
+    user_info = Depends(get_current_user)
+):
+    db, cur = get_db()
+    cur.execute("SELECT COUNT(*) AS total FROM sys_user")
+    total = cur.fetchone()["total"]
+    offset = (page - 1) * size
+    cur.execute("SELECT id, username, nickname, avatar, create_time FROM sys_user LIMIT %s,%s", (offset, size))
+    data = cur.fetchall()
+    db.close()
+    return {
+        "code": 200,
+        "data": data,
+        "total": total,
+        "page": page,
+        "size": size
+    }
+
+# 新增用户（支持上传头像）
+@router.post("/add")
+def user_add(
+    username: str = Form(...),
+    password: str = Form(...),
+    nickname: str = Form(...),
+    file: UploadFile = File(None),
+    user_info = Depends(get_current_user)
+):
+    db, cur = get_db()
+    create_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hashed_pw = hash_password(password)
+
+    avatar_path = None
+    if file:
+        avatar_path = save_avatar(file)
+
+    cur.execute(
+        "INSERT INTO sys_user(username,password,nickname,avatar,create_time) VALUES(%s,%s,%s,%s,%s)",
+        (username, hashed_pw, nickname, avatar_path, create_time)
+    )
+    db.commit()
+    db.close()
+    return {"code": 200, "msg": "用户新增成功", "avatar": avatar_path}
+
+# 修改用户（支持更换头像）
+@router.post("/update")
+def user_update(
+    uid: int = Form(...),
+    nickname: str = Form(...),
+    file: UploadFile = File(None),
+    user_info = Depends(get_current_user)
+):
+    db, cur = get_db()
+
+    if file:
+        cur.execute("SELECT avatar FROM sys_user WHERE id=%s", (uid,))
+        old = cur.fetchone()
+        if old and old.get("avatar"):
+            old_path = os.path.join(AVATAR_DIR, old["avatar"])
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        avatar_path = save_avatar(file)
+        cur.execute("UPDATE sys_user SET nickname=%s, avatar=%s WHERE id=%s", (nickname, avatar_path, uid))
+    else:
+        cur.execute("UPDATE sys_user SET nickname=%s WHERE id=%s", (nickname, uid))
+
+    db.commit()
+    db.close()
+    return {"code": 200, "msg": "用户修改成功"}
+
+# 删除用户（同时删除头像文件）
+@router.delete("/del")
+def user_del(uid: int, user_info = Depends(get_current_user)):
+    db, cur = get_db()
+    cur.execute("SELECT avatar FROM sys_user WHERE id=%s", (uid,))
+    old = cur.fetchone()
+    if old and old.get("avatar"):
+        old_path = os.path.join(AVATAR_DIR, old["avatar"])
+        if os.path.exists(old_path):
+            os.remove(old_path)
+    cur.execute("DELETE FROM sys_user WHERE id=%s", (uid,))
+    db.commit()
+    db.close()
+    return {"code": 200, "msg": "用户删除成功"}
+
+# 单条用户详情（不返回密码）
+@router.get("/detail")
+def user_detail(uid: int, user_info = Depends(get_current_user)):
+    db, cur = get_db()
+    cur.execute("SELECT id, username, nickname, avatar, create_time FROM sys_user WHERE id=%s", (uid,))
+    data = cur.fetchone()
+    db.close()
+    return {"code": 200, "data": data}
+
+# ===== 头像保存工具 =====
+def save_avatar(file: UploadFile) -> str:
+    if not os.path.exists(AVATAR_DIR):
+        os.makedirs(AVATAR_DIR)
+    ext = os.path.splitext(file.filename)[1].lower()
+    filename = f"avatar_{datetime.now().strftime('%Y%m%d%H%M%S%f')}{ext}"
+    save_path = os.path.join(AVATAR_DIR, filename)
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return filename
+```
+
+> **教学点：** 分页使用了 `LIMIT offset, size` 写法，前端传 `page` 和 `size`，后端自动计算偏移量。每个接口都通过 `Depends(get_current_user)` 做登录校验。`Form(...)` 与 `File(None)` 混合使用实现表单+文件同时提交。
+
+#### 12. app/api/upload.py — 文件上传 + 列表查询
+
+```python
+import os, shutil
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from app.api.deps import get_current_user
+from app.core.db import get_db
+from datetime import datetime
+
+# 允许上传的文件类型白名单
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".zip", ".rar"}
+
+router = APIRouter(prefix="/api", tags=["文件上传模块"])
+
+@router.post("/upload")
+def upload(file: UploadFile = File(...), user_info = Depends(get_current_user)):
+    # 文件类型校验
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型：{ext}")
+
+    save_dir = "upload"
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+    save_path = os.path.join(save_dir, file.filename)
+    with open(save_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    upload_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db, cur = get_db()
+    cur.execute(
+        "INSERT INTO upload_file(file_name,file_path,upload_user,upload_time) VALUES(%s,%s,%s,%s)",
+        (file.filename, save_path, user_info["uid"], upload_time)
+    )
+    db.commit()
+    db.close()
+    return {
+        "code":200,
+        "filename": file.filename,
+        "path": save_path,
+        "upload_time": upload_time,
+        "msg": "文件上传完成"
+    }
+
+# 查询上传文件分页列表
+@router.get("/upload/list")
+def upload_list(
+    page: int = 1,
+    size: int = 10,
+    user_info = Depends(get_current_user)
+):
+    db, cur = get_db()
+    offset = (page - 1) * size
+    cur.execute("SELECT * FROM upload_file ORDER BY upload_time DESC LIMIT %s,%s", (offset, size))
+    data = cur.fetchall()
+    cur.execute("SELECT COUNT(*) AS total FROM upload_file")
+    total = cur.fetchone()["total"]
+    db.close()
+    return {"code":200, "data":data, "total":total, "page":page, "size":size}
+```
+
+> **教学点：** `UploadFile` 是 FastAPI 内置的文件上传类型，`shutil.copyfileobj` 将文件流写入磁盘，同时将记录存入数据库。
+
+#### 13. app/api/excel.py — Excel 导入导出接口
+
+```python
+import os
+from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi.responses import FileResponse
+from app.api.deps import get_current_user
+from app.core.db import get_db
+from app.core.security import hash_password
+from app.utils.excel_util import export_user_excel, import_user_excel
+from datetime import datetime
+
+router = APIRouter(prefix="/api/excel", tags=["Excel导入导出模块"])
+
+# 导出用户Excel（不导出密码字段）
+@router.get("/export/user")
+def export_user(current_user = Depends(get_current_user)):
+    excel_dir = "excel"
+    if not os.path.exists(excel_dir):
+        os.mkdir(excel_dir)
+    db, cur = get_db()
+    cur.execute("SELECT id, username, nickname, create_time FROM sys_user")
+    user_data = cur.fetchall()
+    db.close()
+    file_name = f"用户数据_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
+    save_path = os.path.join(excel_dir, file_name)
+    export_user_excel(user_data, save_path)
+    return FileResponse(save_path, filename=file_name)
+
+# Excel批量导入用户（密码自动加密）
+@router.post("/import/user")
+def import_user(file: UploadFile = File(...), current_user = Depends(get_current_user)):
+    temp_path = f"temp_{file.filename}"
+    with open(temp_path, "wb") as f:
+        f.write(file.file.read())
+    user_list = import_user_excel(temp_path)
+    db, cur = get_db()
+    create_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    count = 0
+    for user in user_list:
+        try:
+            username = user.get("用户名")
+            password = hash_password("123456")  # 导入默认密码，加密存储
+            nickname = user.get("用户昵称", username)
+            cur.execute(
+                "INSERT INTO sys_user(username,password,nickname,create_time) VALUES(%s,%s,%s,%s)",
+                (username, password, nickname, create_time)
+            )
+            count += 1
+        except Exception:
+            continue
+    db.commit()
+    db.close()
+    os.remove(temp_path)
+    return {"code":200, "msg":f"导入成功，共新增{count}条用户数据"}
+```
+
+> **教学点：** 导出使用 `FileResponse` 直接返回文件流给前端下载；导入使用 `FormData` 接收 Excel 文件，用 `dropna` 跳过空行。
+
+---
+
+### 六、路由汇总
+
+#### 14. app/api/__init__.py — 汇总所有业务路由
+
+```python
+from fastapi import APIRouter
+from app.api import login, user, upload, excel
+
+api_router = APIRouter()
+api_router.include_router(login.router)
+api_router.include_router(user.router)
+api_router.include_router(upload.router)
+api_router.include_router(excel.router)
+```
+
+---
+
+### 七、工具函数
+
+#### 15. app/utils/excel_util.py — Pandas 处理 Excel 工具类
+
+```python
+import pandas as pd
+import os
+from datetime import datetime
+
+# Excel导出工具
+def export_user_excel(data_list, save_path):
+    format_data = []
+    for item in data_list:
+        format_data.append({
+            "用户ID": item["id"],
+            "用户名": item["username"],
+            "用户昵称": item["nickname"],
+            "创建时间": item["create_time"]
+        })
+    df = pd.DataFrame(format_data)
+    df.to_excel(save_path, index=False, engine="openpyxl")
+    return save_path
+
+# Excel导入解析工具
+def import_user_excel(file_path):
+    df = pd.read_excel(file_path, engine="openpyxl")
+    df = df.dropna(subset=["用户名"])
+    return df.to_dict(orient="records")
+```
+
+> **教学点：** 导出时将数据库字段名映射为中文列名；导入时跳过"用户名"为空的无效行（`dropna`）。
+
+---
+
+### 八、Docker 容器化
+
+#### 16. backend/Dockerfile
+
+```dockerfile
+FROM continuumio/anaconda3:2022.05
+WORKDIR /root/backend
+COPY . .
+RUN pip install fastapi uvicorn pymysql pyjwt passlib[bcrypt] python-multipart python-dotenv pandas openpyxl
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+#### 17. backend/docker-compose.yml
+
+```yaml
+version: "3.8"
+services:
+  fastapi-backend:
+    build: .
+    container_name: fastapi-admin
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./upload:/root/backend/upload
+      - ./excel:/root/backend/excel
+      - ./logs:/root/backend/logs
+    restart: always
+    network_mode: "host"
+```
+
+> Docker 部署时无需手动创建虚拟环境，容器内已隔离依赖。
+
+---
+
+## 2.3 本地开发启动（Windows 教学环境）
+
+```bash
+# 1. 创建虚拟环境（仅首次）
+cd backend
+python -m venv venv
+
+# 2. 激活虚拟环境（每次启动都要执行）
+.\venv\Scripts\activate
+
+# 激活成功 → 终端出现 (venv) 前缀
+
+# 3. 配置 pip 镜像源（国内必配，避免下载超时）
+pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+
+# 4. 安装依赖（仅首次）
+pip install -r requirements.txt
+
+# （可选）批量插入测试用户数据
+# 在 backend 目录创建 seed_data.py 脚本（详见下方说明），然后执行：
+# python seed_data.py
+
+# 5. 【关键】确认 Linux 上的 MariaDB 已运行
+# 在 Xshell 中连接 Linux 后执行：
+# systemctl status mariadb
+# 如果没启动：systemctl start mariadb
+
+# 6. 启动服务
+python run.py
+```
+
+> 看到 `Uvicorn running on http://0.0.0.0:8000` 即启动成功。
+
+启动后浏览器访问：**http://localhost:8000/docs**
+
+退出虚拟环境：`deactivate`
+
+> **不用虚拟环境也可以：** 直接 `pip install -r requirements.txt` → `python run.py` 也能跑。
+> 教学时如果学生不想多学 venv，跳过步骤 1-2 即可。
+
+## 2.4 服务器部署（Linux 生产环境）
+
+### 方案一：Anaconda 后台启动
+
+```bash
+# Xftp 将 backend 文件夹上传至 Linux /root 目录
+# Xshell 执行以下命令
+cd /root/backend
+conda activate backend
+mkdir -p logs upload excel
+nohup python run.py > logs/run.log 2>&1 &
+tail -f logs/run.log     # 查看实时日志
+```
+
+接口地址：`http://192.168.209.150:8000/docs`
+
+### 方案二：Docker 容器化部署
+
+> ⚠️ 前提条件：Docker CE 20+ 和 docker-compose（见第一章步骤6）
+> ⚠️ Docker Hub 被墙，需先配置代理（见下方）
+
+**步骤1：配置 Docker 代理（国内必配）**
+
+```bash
+mkdir -p /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/proxy.conf <<'EOF'
+[Service]
+Environment="HTTP_PROXY=http://192.168.209.1:7890"
+Environment="HTTPS_PROXY=http://192.168.209.1:7890"
+Environment="NO_PROXY=localhost,127.0.0.1"
+EOF
+systemctl daemon-reload && systemctl restart docker
+```
+
+> 需 Windows 梯子开启**允许局域网连接**（Allow LAN），且 IP 和端口与梯子一致。
+
+**步骤2：确认 Dockerfile 内容（关键避坑）**
+
+```bash
+cat /root/backend/Dockerfile
+```
+
+必须包含以下内容（注意不要漏 `bcrypt`）：
+
+```dockerfile
+FROM python:3.10
+WORKDIR /root/backend
+COPY . .
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir fastapi uvicorn pymysql pyjwt bcrypt python-multipart python-dotenv pandas openpyxl
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**步骤3：构建镜像（首次约 3~8 分钟）**
+
+```bash
+cd /root/backend && docker build -t backend-fastapi-backend .
+```
+
+**步骤4：启动容器**
+
+```bash
+docker run -d --name fastapi-admin -p 8000:8000 --restart always backend-fastapi-backend
+```
+
+**步骤5：验证**
+
+```bash
+docker ps                    # 查看容器状态（STATUS 应为 Up）
+docker logs -f fastapi-admin # 查看日志（看到 Uvicorn running 即成功）
+```
+
+访问 http://192.168.209.150:8000/docs 验证。
+
+**常用管理命令：**
+
+```bash
+docker stop fastapi-admin                       # 停止
+docker rm fastapi-admin                         # 删除
+docker logs -f fastapi-admin                    # 查看日志
+docker ps -a                                    # 查看所有容器（含已停止）
+docker compose up -d --build                    # 一键构建+启动
+```
+
+> **避坑总结：** ① 不要用 `anaconda3` 镜像，太大 ② 别忘了 `bcrypt` ③ 国内必须配 pip 镜像 ④ Docker Hub 被墙必须配代理 ⑤ 新版 Docker CE 才能支持镜像加速
+
+## 2.5 启动验证
+
+| 地址 | 说明 |
+|------|------|
+| http://localhost:8000/docs | Swagger 文档（本地开发） |
+| http://192.168.209.150:8000/docs | Swagger 文档（Linux 部署） |
+
+看到 Swagger 页面即表示后端启动成功，可在页面中在线测试所有接口。

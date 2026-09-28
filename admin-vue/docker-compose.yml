@@ -1,0 +1,7 @@
+services:
+  vue-admin-front:
+    build: .
+    container_name: vue-front
+    ports:
+      - "80:80"
+    restart: always
