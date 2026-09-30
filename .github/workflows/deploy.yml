@@ -14,7 +14,8 @@ jobs:
           ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
           cd /root/project
           git reset --hard HEAD
-          git clean -fd
+          git clean -fd -e 'backend/.env'
+          test -f /root/project/backend/.env || { echo "ERROR: backend/.env 丢失"; exit 1; }
           git pull origin main
           echo "=== 当前 commit ==="
           git log -1 --oneline
