@@ -1,4 +1,4 @@
-name: Deploy to Aliyun Server
+﻿name: Deploy to Aliyun Server
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: self-hosted
+    runs-on: [self-hosted, aliyun]
     steps:
       - name: 清理并拉取最新代码
         run: |
@@ -20,21 +20,6 @@ jobs:
           git log -1 --oneline
           echo "=== docker-compose-all.yml 校验 ==="
           docker compose -f docker-compose-all.yml config
-
-      - name: 写入后端环境变量
-        run: |
-          cat > /root/project/backend/.env <<'ENV'
-          DB_HOST=db
-          DB_PORT=3306
-          DB_USER=admin_user
-          DB_PASSWORD=Admin@2026
-          DB_NAME=admin_db
-          JWT_SECRET_KEY=admin_2026_secret_888
-          JWT_ALGORITHM=HS256
-          JWT_EXPIRE_HOUR=2
-          SERVER_HOST=0.0.0.0
-          SERVER_PORT=8000
-          ENV
 
       - name: 停止旧容器并释放端口
         run: |
@@ -50,7 +35,6 @@ jobs:
       - name: 初始化测试数据
         run: |
           sleep 15
-          cd /root/project/backend
           docker exec fastapi-admin python seed_data.py || true
 
       - name: 查看运行状态
